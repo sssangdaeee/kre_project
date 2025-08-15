@@ -28,8 +28,9 @@ sigma_year <- 1.2
 tail_years <- 4       # last L years, e.g., 2032–2035
 sigma_tail <- 1.0
 
-# Boundary floor at 2035
-floor_val  <- -0.01    # 0%
+# Boundary caps at 2035
+floor_val <- -0.01   # 하단 -1%
+ceil_val  <-  0.01   # 상단 +1%
 
 # Heatmap contrast (symmetric clipping by abs quantile)
 sat_q      <- 0.90    # 0.85–0.95 권장
@@ -117,23 +118,36 @@ gaussian_2d <- function(mat, sigma_age, sigma_year) {
   out
 }
 
-# Tail boundary smoothing (last few years) anchored at bound_val
-boundary_tail_smooth <- function(mat, tail_years = 4, sigma_tail = 1.0, bound_val = 0.00) {
+# Tail boundary smoothing with dual anchors (floor & ceiling)
+boundary_tail_smooth_dual <- function(mat, tail_years = 4, sigma_tail = 1.0,
+                                      floor_val = -0.01, ceil_val = 0.01, tol = 1e-12) {
   wy   <- gaussian_weights(sigma_tail)
   nY   <- ncol(mat); last <- nY
   if (tail_years < 2) return(mat)
   k0   <- max(1, last - tail_years + 1)
   
-  # only rows actually clamped at bound_val
-  idx <- which(abs(as.numeric(mat[, last]) - bound_val) < 1e-12)
-  if (length(idx) == 0) return(mat)
+  # (A) floor-anchored rows
+  idx_floor <- which(abs(as.numeric(mat[, last]) - floor_val) < tol)
+  if (length(idx_floor)) {
+    for (i in idx_floor) {
+      v <- as.numeric(mat[i, ])
+      v[last] <- floor_val
+      vs <- smooth_1d(v, wy)
+      mat[i, k0:last] <- vs[k0:last]
+      mat[i, last]    <- floor_val
+    }
+  }
   
-  for (i in idx) {
-    v       <- as.numeric(mat[i, ])
-    v[last] <- bound_val               # anchor last value
-    vs      <- smooth_1d(v, wy)        # 1D smoothing along year
-    mat[i, k0:last] <- vs[k0:last]
-    mat[i, last]    <- bound_val       # re-anchor
+  # (B) ceiling-anchored rows
+  idx_ceil <- which(abs(as.numeric(mat[, last]) - ceil_val) < tol)
+  if (length(idx_ceil)) {
+    for (i in idx_ceil) {
+      v <- as.numeric(mat[i, ])
+      v[last] <- ceil_val
+      vs <- smooth_1d(v, wy)
+      mat[i, k0:last] <- vs[k0:last]
+      mat[i, last]    <- ceil_val
+    }
   }
   mat
 }
@@ -216,12 +230,14 @@ col_2035 <- "2035"
 if (!(col_2035 %in% colnames(male_sm0)) || !(col_2035 %in% colnames(female_sm0))) {
   stop("입력 데이터에 '2035' 컬럼이 필요합니다.")
 }
-male_sm0[,   col_2035] <- pmax(male_sm0[,   col_2035], floor_val)
-female_sm0[, col_2035] <- pmax(female_sm0[, col_2035], floor_val)
+male_sm0[,   col_2035] <- pmin(pmax(male_sm0[,   col_2035], floor_val), ceil_val)
+female_sm0[, col_2035] <- pmin(pmax(female_sm0[, col_2035], floor_val), ceil_val)
 
-# 4) Tail boundary smoothing (last few years; only for rows clamped at floor)
-male_sm   <- boundary_tail_smooth(male_sm0,   tail_years = tail_years, sigma_tail = sigma_tail, bound_val = floor_val)
-female_sm <- boundary_tail_smooth(female_sm0, tail_years = tail_years, sigma_tail = sigma_tail, bound_val = floor_val)
+# 4) Tail boundary smoothing with dual anchors
+male_sm   <- boundary_tail_smooth_dual(male_sm0,   tail_years = tail_years, sigma_tail = sigma_tail,
+                                       floor_val = floor_val, ceil_val = ceil_val)
+female_sm <- boundary_tail_smooth_dual(female_sm0, tail_years = tail_years, sigma_tail = sigma_tail,
+                                       floor_val = floor_val, ceil_val = ceil_val)
 
 # 5) Export CSVs
 write.csv(cbind(Age = rownames(male_sm),   round(male_sm,   6)), file.path(out_dir, "male_smoothed_numeric.csv"),   row.names = FALSE)
