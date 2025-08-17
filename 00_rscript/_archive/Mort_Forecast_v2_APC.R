@@ -295,3 +295,4 @@ message("✅ Complete. Excel saved: ", out_xlsx)
 
 # -------- 9) (선택) 시각화 ----------------------------------------------
 # plot(APCfit, param="kt"); plot(APCfit, param="gc")
+
